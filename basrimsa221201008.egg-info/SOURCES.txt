@@ -1,0 +1,7 @@
+setup.py
+basriMSA/__init__.py
+basriMSA/msa_core.py
+basrimsa221201008.egg-info/PKG-INFO
+basrimsa221201008.egg-info/SOURCES.txt
+basrimsa221201008.egg-info/dependency_links.txt
+basrimsa221201008.egg-info/top_level.txt
