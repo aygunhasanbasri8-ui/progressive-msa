@@ -10,6 +10,63 @@ from typing import Dict, List, Tuple, Union
 
 AlignmentTree = Union[str, Tuple["AlignmentTree", "AlignmentTree"]]
 
+MISMATCH_COST = 1
+GAP_PENALTY = 1
+
+# Traceback operations: M consumes a residue from both sides,
+# D only from the first sequence, I only from the second.
+MATCH, DELETE, INSERT = "M", "D", "I"
+
+
+def _needleman_wunsch(seq1: str, seq2: str) -> Tuple[int, List[str]]:
+    """Returns the edit distance and the alignment path between two sequences."""
+    n, m = len(seq1), len(seq2)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    tb = [[MATCH] * (m + 1) for _ in range(n + 1)]
+
+    for i in range(1, n + 1):
+        dp[i][0] = i * GAP_PENALTY
+        tb[i][0] = DELETE
+    for j in range(1, m + 1):
+        dp[0][j] = j * GAP_PENALTY
+        tb[0][j] = INSERT
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = 0 if seq1[i - 1] == seq2[j - 1] else MISMATCH_COST
+            diag = dp[i - 1][j - 1] + cost
+            up = dp[i - 1][j] + GAP_PENALTY
+            left = dp[i][j - 1] + GAP_PENALTY
+
+            # Ties go diag > up > left; changing the order changes the output alignment.
+            best = min(diag, up, left)
+            dp[i][j] = best
+            if best == diag:
+                tb[i][j] = MATCH
+            elif best == up:
+                tb[i][j] = DELETE
+            else:
+                tb[i][j] = INSERT
+
+    path = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        op = tb[i][j]
+        path.append(op)
+        if op != INSERT:
+            i -= 1
+        if op != DELETE:
+            j -= 1
+
+    path.reverse()
+    return dp[n][m], path
+
+
+def _apply_path(seq: str, path: List[str], gap_op: str) -> str:
+    """Inserts a gap wherever the path holds gap_op, consumes a residue otherwise."""
+    residues = iter(seq)
+    return "".join("-" if op == gap_op else next(residues) for op in path)
+
 
 class ProgressiveMSA:
     """Aligns a set of sequences using progressive multiple sequence alignment."""
@@ -38,83 +95,54 @@ class ProgressiveMSA:
 
         for i in range(self.num_seqs):
             for j in range(i + 1, self.num_seqs):
-                seq1 = self.sequences[self.names[i]]
-                seq2 = self.sequences[self.names[j]]
-
-                distance = self.needleman_wunsch_distance(seq1, seq2)
-                matrix[i][j] = distance
-                matrix[j][i] = distance
+                distance = self.needleman_wunsch_distance(
+                    self.sequences[self.names[i]], self.sequences[self.names[j]]
+                )
+                matrix[i][j] = matrix[j][i] = distance
 
         self.distance_matrix = matrix
         return self.distance_matrix
 
     def needleman_wunsch_distance(self, seq1: str, seq2: str) -> int:
         """Returns the global-alignment edit distance between two sequences."""
-        match_cost = 0
-        mismatch_cost = 1
-        gap_penalty = 1
-
-        n, m = len(seq1), len(seq2)
-        dp = [[0] * (m + 1) for _ in range(n + 1)]
-
-        for i in range(1, n + 1):
-            dp[i][0] = dp[i - 1][0] + gap_penalty
-        for j in range(1, m + 1):
-            dp[0][j] = dp[0][j - 1] + gap_penalty
-
-        for i in range(1, n + 1):
-            for j in range(1, m + 1):
-                cost = match_cost if seq1[i - 1] == seq2[j - 1] else mismatch_cost
-
-                match_mismatch = dp[i - 1][j - 1] + cost
-                delete = dp[i - 1][j] + gap_penalty
-                insert = dp[i][j - 1] + gap_penalty
-
-                dp[i][j] = min(match_mismatch, delete, insert)
-
-        return dp[n][m]
+        distance, _ = _needleman_wunsch(seq1, seq2)
+        return distance
 
     def build_guide_tree(self) -> AlignmentTree:
         """Builds a guide tree over the sequences using UPGMA clustering."""
         self._log("2. Building guide tree (UPGMA)...")
-        clusters: Dict[int, AlignmentTree] = {i: name for i, name in enumerate(self.names)}
-        distance_dict: Dict[Tuple[int, int], float] = {}
+        clusters: Dict[int, AlignmentTree] = dict(enumerate(self.names))
+        distances: Dict[Tuple[int, int], float] = {
+            (i, j): self.distance_matrix[i][j]
+            for i in range(self.num_seqs)
+            for j in range(self.num_seqs)
+            if i != j
+        }
 
-        for i in range(self.num_seqs):
-            for j in range(self.num_seqs):
-                if i != j:
-                    distance_dict[(i, j)] = self.distance_matrix[i][j]
-
-        active_clusters = list(clusters.keys())
+        active = list(clusters)
         next_id = self.num_seqs
 
-        while len(active_clusters) > 1:
+        while len(active) > 1:
+            # Strict < keeps the first closest pair in scan order, which keeps the tree deterministic.
             min_dist = float("inf")
-            c1, c2 = -1, -1
+            c1 = c2 = -1
+            for i, id1 in enumerate(active):
+                for id2 in active[i + 1:]:
+                    if distances[(id1, id2)] < min_dist:
+                        min_dist, c1, c2 = distances[(id1, id2)], id1, id2
 
-            for i in range(len(active_clusters)):
-                for j in range(i + 1, len(active_clusters)):
-                    id1, id2 = active_clusters[i], active_clusters[j]
-                    dist = distance_dict[(id1, id2)]
+            clusters[next_id] = (clusters[c1], clusters[c2])
+            for other in active:
+                if other not in (c1, c2):
+                    merged = (distances[(c1, other)] + distances[(c2, other)]) / 2.0
+                    distances[(next_id, other)] = distances[(other, next_id)] = merged
 
-                    if dist < min_dist:
-                        min_dist, c1, c2 = dist, id1, id2
-
-            new_cluster_node = (clusters[c1], clusters[c2])
-            clusters[next_id] = new_cluster_node
-
-            for other_id in active_clusters:
-                if other_id != c1 and other_id != c2:
-                    new_dist = (distance_dict[(c1, other_id)] + distance_dict[(c2, other_id)]) / 2.0
-                    distance_dict[(next_id, other_id)] = new_dist
-                    distance_dict[(other_id, next_id)] = new_dist
-
-            active_clusters.remove(c1)
-            active_clusters.remove(c2)
-            active_clusters.append(next_id)
+            active.remove(c1)
+            active.remove(c2)
+            active.append(next_id)
             next_id += 1
 
-        self.guide_tree = clusters[active_clusters[0]]
+        self.guide_tree = clusters[active[0]]
         self._log(f"   Tree hierarchy: {self.guide_tree}")
         return self.guide_tree
 
@@ -127,104 +155,23 @@ class ProgressiveMSA:
         if isinstance(node, str):
             return {node: self.sequences[node]}
 
-        left_node, right_node = node
-        left_profile = self._traverse_and_align(left_node)
-        right_profile = self._traverse_and_align(right_node)
-
-        return self._align_profiles(left_profile, right_profile)
+        left, right = node
+        return self._align_profiles(self._traverse_and_align(left), self._traverse_and_align(right))
 
     def _get_consensus(self, profile: Dict[str, str]) -> str:
-        seqs = list(profile.values())
-        if not seqs:
-            return ""
-        length = len(seqs[0])
-        consensus = ""
-        for i in range(length):
-            col = [s[i] for s in seqs if s[i] != "-"]
-            if not col:
-                consensus += "-"
-            else:
-                consensus += max(set(col), key=col.count)
-        return consensus
+        consensus = []
+        for column in zip(*profile.values()):
+            residues = [c for c in column if c != "-"]
+            consensus.append(max(set(residues), key=residues.count) if residues else "-")
+        return "".join(consensus)
 
     def _align_profiles(self, prof1: Dict[str, str], prof2: Dict[str, str]) -> Dict[str, str]:
-        cons1 = self._get_consensus(prof1)
-        cons2 = self._get_consensus(prof2)
+        # Profiles are aligned through their consensus strings, not column by column.
+        _, path = _needleman_wunsch(self._get_consensus(prof1), self._get_consensus(prof2))
 
-        path = self._nw_traceback(cons1, cons2)
-        aligned_profile = {}
-
-        for name, seq in prof1.items():
-            aligned_seq = ""
-            idx = 0
-            for op in path:
-                if op in ["M", "D"]:
-                    aligned_seq += seq[idx] if idx < len(seq) else "-"
-                    idx += 1
-                else:
-                    aligned_seq += "-"
-            aligned_profile[name] = aligned_seq
-
-        for name, seq in prof2.items():
-            aligned_seq = ""
-            idx = 0
-            for op in path:
-                if op in ["M", "I"]:
-                    aligned_seq += seq[idx] if idx < len(seq) else "-"
-                    idx += 1
-                else:
-                    aligned_seq += "-"
-            aligned_profile[name] = aligned_seq
-
-        return aligned_profile
-
-    def _nw_traceback(self, seq1: str, seq2: str) -> List[str]:
-        n, m = len(seq1), len(seq2)
-        dp = [[0] * (m + 1) for _ in range(n + 1)]
-        tb = [[0] * (m + 1) for _ in range(n + 1)]
-
-        gap_pen = 1
-        for i in range(1, n + 1):
-            dp[i][0] = i * gap_pen
-            tb[i][0] = 1
-        for j in range(1, m + 1):
-            dp[0][j] = j * gap_pen
-            tb[0][j] = 2
-
-        for i in range(1, n + 1):
-            for j in range(1, m + 1):
-                cost = 0 if seq1[i - 1] == seq2[j - 1] else 1
-
-                diag = dp[i - 1][j - 1] + cost
-                up = dp[i - 1][j] + gap_pen
-                left = dp[i][j - 1] + gap_pen
-
-                min_val = min(diag, up, left)
-                dp[i][j] = min_val
-
-                if min_val == diag:
-                    tb[i][j] = 0
-                elif min_val == up:
-                    tb[i][j] = 1
-                else:
-                    tb[i][j] = 2
-
-        i, j = n, m
-        path = []
-        while i > 0 or j > 0:
-            if tb[i][j] == 0:
-                path.append("M")
-                i -= 1
-                j -= 1
-            elif tb[i][j] == 1:
-                path.append("D")
-                i -= 1
-            else:
-                path.append("I")
-                j -= 1
-
-        path.reverse()
-        return path
+        aligned = {name: _apply_path(seq, path, INSERT) for name, seq in prof1.items()}
+        aligned.update({name: _apply_path(seq, path, DELETE) for name, seq in prof2.items()})
+        return aligned
 
     def run(self) -> Dict[str, str]:
         """Runs the full pipeline and returns the aligned sequences."""
