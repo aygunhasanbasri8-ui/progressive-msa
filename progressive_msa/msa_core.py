@@ -6,9 +6,12 @@ Implements the classic three-stage pipeline:
 3. Progressive alignment of sequences/profiles following the guide tree.
 """
 
-from typing import Dict, List, Tuple, Union
+import logging
+from typing import Union
 
-AlignmentTree = Union[str, Tuple["AlignmentTree", "AlignmentTree"]]
+logger = logging.getLogger(__name__)
+
+AlignmentTree = Union[str, tuple["AlignmentTree", "AlignmentTree"]]
 
 MISMATCH_COST = 1
 GAP_PENALTY = 1
@@ -18,7 +21,7 @@ GAP_PENALTY = 1
 MATCH, DELETE, INSERT = "M", "D", "I"
 
 
-def _needleman_wunsch(seq1: str, seq2: str) -> Tuple[int, List[str]]:
+def _needleman_wunsch(seq1: str, seq2: str) -> tuple[int, list[str]]:
     """Returns the edit distance and the alignment path between two sequences."""
     n, m = len(seq1), len(seq2)
     dp = [[0] * (m + 1) for _ in range(n + 1)]
@@ -62,7 +65,7 @@ def _needleman_wunsch(seq1: str, seq2: str) -> Tuple[int, List[str]]:
     return dp[n][m], path
 
 
-def _apply_path(seq: str, path: List[str], gap_op: str) -> str:
+def _apply_path(seq: str, path: list[str], gap_op: str) -> str:
     """Inserts a gap wherever the path holds gap_op, consumes a residue otherwise."""
     residues = iter(seq)
     return "".join("-" if op == gap_op else next(residues) for op in path)
@@ -71,7 +74,7 @@ def _apply_path(seq: str, path: List[str], gap_op: str) -> str:
 class ProgressiveMSA:
     """Aligns a set of sequences using progressive multiple sequence alignment."""
 
-    def __init__(self, sequences: Dict[str, str], verbose: bool = True):
+    def __init__(self, sequences: dict[str, str], verbose: bool = True):
         """
         Args:
             sequences: Mapping of sequence name to sequence string.
@@ -80,15 +83,17 @@ class ProgressiveMSA:
         self.sequences = sequences
         self.names = list(sequences.keys())
         self.num_seqs = len(sequences)
-        self.distance_matrix: List[List[int]] = []
+        self.distance_matrix: list[list[int]] = []
         self.guide_tree: AlignmentTree = None
         self.verbose = verbose
 
     def _log(self, message: str) -> None:
+        # verbose keeps the old print behaviour; the logger is for callers that embed the library.
+        logger.info(message)
         if self.verbose:
             print(message)
 
-    def calculate_distance_matrix(self) -> List[List[int]]:
+    def calculate_distance_matrix(self) -> list[list[int]]:
         """Computes the pairwise edit-distance matrix using Needleman-Wunsch."""
         self._log("1. Calculating distance matrix (Needleman-Wunsch)...")
         matrix = [[0] * self.num_seqs for _ in range(self.num_seqs)]
@@ -111,8 +116,8 @@ class ProgressiveMSA:
     def build_guide_tree(self) -> AlignmentTree:
         """Builds a guide tree over the sequences using UPGMA clustering."""
         self._log("2. Building guide tree (UPGMA)...")
-        clusters: Dict[int, AlignmentTree] = dict(enumerate(self.names))
-        distances: Dict[Tuple[int, int], float] = {
+        clusters: dict[int, AlignmentTree] = dict(enumerate(self.names))
+        distances: dict[tuple[int, int], float] = {
             (i, j): self.distance_matrix[i][j]
             for i in range(self.num_seqs)
             for j in range(self.num_seqs)
@@ -127,7 +132,7 @@ class ProgressiveMSA:
             min_dist = float("inf")
             c1 = c2 = -1
             for i, id1 in enumerate(active):
-                for id2 in active[i + 1:]:
+                for id2 in active[i + 1 :]:
                     if distances[(id1, id2)] < min_dist:
                         min_dist, c1, c2 = distances[(id1, id2)], id1, id2
 
@@ -146,26 +151,28 @@ class ProgressiveMSA:
         self._log(f"   Tree hierarchy: {self.guide_tree}")
         return self.guide_tree
 
-    def progressive_alignment(self) -> Dict[str, str]:
+    def progressive_alignment(self) -> dict[str, str]:
         """Aligns all sequences by traversing the guide tree bottom-up."""
         self._log("3. Running progressive alignment...\n")
         return self._traverse_and_align(self.guide_tree)
 
-    def _traverse_and_align(self, node: AlignmentTree) -> Dict[str, str]:
+    def _traverse_and_align(self, node: AlignmentTree) -> dict[str, str]:
         if isinstance(node, str):
             return {node: self.sequences[node]}
 
         left, right = node
         return self._align_profiles(self._traverse_and_align(left), self._traverse_and_align(right))
 
-    def _get_consensus(self, profile: Dict[str, str]) -> str:
+    def _get_consensus(self, profile: dict[str, str]) -> str:
         consensus = []
         for column in zip(*profile.values()):
             residues = [c for c in column if c != "-"]
-            consensus.append(max(set(residues), key=residues.count) if residues else "-")
+            # max over the list (not a set) breaks ties by the first sequence in the column;
+            # a set's order depends on PYTHONHASHSEED, which made runs differ from each other.
+            consensus.append(max(residues, key=residues.count) if residues else "-")
         return "".join(consensus)
 
-    def _align_profiles(self, prof1: Dict[str, str], prof2: Dict[str, str]) -> Dict[str, str]:
+    def _align_profiles(self, prof1: dict[str, str], prof2: dict[str, str]) -> dict[str, str]:
         # Profiles are aligned through their consensus strings, not column by column.
         _, path = _needleman_wunsch(self._get_consensus(prof1), self._get_consensus(prof2))
 
@@ -173,7 +180,7 @@ class ProgressiveMSA:
         aligned.update({name: _apply_path(seq, path, DELETE) for name, seq in prof2.items()})
         return aligned
 
-    def run(self) -> Dict[str, str]:
+    def run(self) -> dict[str, str]:
         """Runs the full pipeline and returns the aligned sequences."""
         self.calculate_distance_matrix()
 

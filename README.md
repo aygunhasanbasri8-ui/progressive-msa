@@ -16,9 +16,11 @@ small inputs. See [Limitations](#limitations) before using it on real biological
 ## Features
 
 - Pure Python, no runtime dependencies, Python 3.9 or newer.
-- Deterministic results: ties in the alignment and in the UPGMA pair selection are always broken the same way.
+- Deterministic results: ties in the alignment, in the consensus and in the UPGMA pair selection are always broken
+  the same way, independent of `PYTHONHASHSEED`.
 - Every step is also callable on its own (`calculate_distance_matrix`, `build_guide_tree`, `progressive_alignment`).
-- Optional progress logging.
+- Optional progress logging (printed with `verbose=True`, always sent to the `progressive_msa` logger).
+- FASTA input, FASTA or Clustal output, and an `msa` command.
 
 ## Installation
 
@@ -48,14 +50,28 @@ Output (the progress log is printed first unless `verbose=False`):
 
 ```
 Seq3 ACCGT
-Seq1 A-CTG
-Seq2 A-CTC
+Seq1 ACTG-
+Seq2 ACTC-
 ```
 
 Pass `verbose=False` to `ProgressiveMSA(...)` to suppress progress logging.
 
 The returned dictionary lists the sequences in the order they are visited in the guide tree,
 not in input order.
+
+### Command line
+
+```bash
+msa align input.fasta                       # aligned FASTA to stdout
+msa align input.fasta -o out.aln -f clustal  # Clustal-style blocks with a conservation line
+cat input.fasta | msa align -               # read from stdin
+```
+
+Sequences are written in input order; `--tree-order` keeps the guide-tree order instead.
+Gaps in the input are ignored, the sequences are aligned from scratch. `-v` logs the pipeline
+steps to stderr.
+
+From Python: `parse_fasta`, `read_fasta`, `format_fasta` and `format_clustal`.
 
 ### API
 
@@ -88,12 +104,12 @@ not in input order.
 ## Development
 
 ```bash
-pip install -e .
-pip install pytest
+pip install -e ".[dev]"
+ruff check . && ruff format --check .
 pytest
 ```
 
-GitHub Actions runs the tests on Python 3.9, 3.11 and 3.12 for every push and pull request
+GitHub Actions runs ruff and the tests on Python 3.9, 3.11 and 3.12 for every push and pull request
 (`.github/workflows/ci.yml`).
 
 ## License
