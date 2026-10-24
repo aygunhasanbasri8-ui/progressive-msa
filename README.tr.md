@@ -17,9 +17,11 @@ Gerçek biyolojik veride kullanmadan önce [Sınırlar](#sınırlar) bölümüne
 ## Özellikler
 
 - Saf Python, çalışma zamanı bağımlılığı yok, Python 3.9 ve üzeri.
-- Deterministik sonuç: hizalamadaki ve UPGMA çift seçimindeki eşitlikler her zaman aynı şekilde çözülür.
+- Deterministik sonuç: hizalamadaki, konsensustaki ve UPGMA çift seçimindeki eşitlikler `PYTHONHASHSEED`'den
+  bağımsız olarak her zaman aynı şekilde çözülür.
 - Her adım tek başına da çağrılabilir (`calculate_distance_matrix`, `build_guide_tree`, `progressive_alignment`).
-- İsteğe bağlı ilerleme günlüğü.
+- İsteğe bağlı ilerleme günlüğü (`verbose=True` ile ekrana basılır, `progressive_msa` logger'ına her zaman gider).
+- FASTA girişi, FASTA ya da Clustal çıkışı ve `msa` komutu.
 
 ## Kurulum
 
@@ -49,13 +51,26 @@ for name, seq in aligned.items():
 
 ```
 Seq3 ACCGT
-Seq1 A-CTG
-Seq2 A-CTC
+Seq1 ACTG-
+Seq2 ACTC-
 ```
 
 İlerleme günlüğünü kapatmak için `ProgressiveMSA(...)` çağrısına `verbose=False` verin.
 
 Dönen sözlük, dizileri girdi sırasında değil rehber ağaçta dolaşılma sırasıyla verir.
+
+### Komut satırı
+
+```bash
+msa align input.fasta                       # hizalanmış FASTA standart çıktıya
+msa align input.fasta -o out.aln -f clustal  # korunmuş sütun satırıyla Clustal biçimi
+cat input.fasta | msa align -               # standart girişten oku
+```
+
+Diziler girdi sırasıyla yazılır; `--tree-order` rehber ağaç sırasını korur. Girdideki boşluklar
+yok sayılır, diziler baştan hizalanır. `-v` adımları standart hata akışına yazar.
+
+Python'dan: `parse_fasta`, `read_fasta`, `format_fasta` ve `format_clustal`.
 
 ### API
 
@@ -88,12 +103,12 @@ Dönen sözlük, dizileri girdi sırasında değil rehber ağaçta dolaşılma s
 ## Geliştirme
 
 ```bash
-pip install -e .
-pip install pytest
+pip install -e ".[dev]"
+ruff check . && ruff format --check .
 pytest
 ```
 
-GitHub Actions her push ve pull request'te testleri Python 3.9, 3.11 ve 3.12 üzerinde çalıştırır
+GitHub Actions her push ve pull request'te ruff'ı ve testleri Python 3.9, 3.11 ve 3.12 üzerinde çalıştırır
 (`.github/workflows/ci.yml`).
 
 ## Lisans

@@ -1,0 +1,63 @@
+"""Command line entry point: `msa align input.fasta -o out.aln --format clustal`."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+
+from .io import FastaError, format_clustal, format_fasta, parse_fasta, read_fasta
+from .msa_core import ProgressiveMSA
+
+FORMATTERS = {"fasta": format_fasta, "clustal": format_clustal}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="msa", description="Progressive multiple sequence alignment.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    align = sub.add_parser("align", help="align the sequences of a FASTA file")
+    align.add_argument("input", help="FASTA file, or '-' for stdin")
+    align.add_argument("-o", "--output", help="output file (default: stdout)")
+    align.add_argument("-f", "--format", choices=sorted(FORMATTERS), default="fasta")
+    align.add_argument(
+        "--tree-order",
+        action="store_true",
+        help="list sequences in guide-tree order instead of input order",
+    )
+    align.add_argument("-v", "--verbose", action="store_true", help="log the pipeline steps to stderr")
+    return parser
+
+
+def _align(args: argparse.Namespace) -> int:
+    try:
+        if args.input == "-":
+            sequences = parse_fasta(sys.stdin)
+        else:
+            sequences = read_fasta(args.input)
+    except (OSError, FastaError) as exc:
+        print(f"msa: {exc}", file=sys.stderr)
+        return 2
+
+    aligned = ProgressiveMSA(sequences, verbose=False).run()
+    if not args.tree_order:
+        aligned = {name: aligned[name] for name in sequences}
+
+    text = FORMATTERS[args.format](aligned)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+    return _align(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
