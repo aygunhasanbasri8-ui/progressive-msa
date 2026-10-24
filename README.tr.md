@@ -72,6 +72,25 @@ yok sayılır, diziler baştan hizalanır. `-v` adımları standart hata akış�
 
 Python'dan: `parse_fasta`, `read_fasta`, `format_fasta` ve `format_clustal`.
 
+### Skorlama
+
+Varsayılan olarak kütüphane eski modelini korur: birim maliyetler ve düzenleme uzaklığı.
+Gerçek diziler için bir skorlama verin; ikili adım Gotoh'un affine boşluk algoritmasını
+(boşluk açma ve uzatma ayrı cezalandırılır) kullanır, rehber ağaç bu hizalamaların
+`1 - özdeşlik` değerinden kurulur:
+
+```python
+from progressive_msa import ProgressiveMSA, Scoring
+
+ProgressiveMSA(proteinler, scoring=Scoring.blosum62())               # boşluk açma 10, uzatma 1
+ProgressiveMSA(proteinler, scoring=Scoring.blosum62(gap_open=11))
+ProgressiveMSA(okumalar, scoring=Scoring.dna())                      # eşleşme 5, geçiş -1, dönüşüm -4
+```
+
+Komut satırında: `msa align in.fasta --scoring blosum62 --gap-open 10 --gap-extend 1`.
+BLOSUM62, NCBI'ın dağıttığı tablodur. Affine boşluk, birim maliyetin dağıtacağı bir
+ekleme ya da silmeyi tek parça tutar.
+
 ### API
 
 | Metot | Açıklama |
@@ -95,7 +114,7 @@ Python'dan: `parse_fasta`, `read_fasta`, `format_fasta` ve `format_clustal`.
 
 ## Sınırlar
 
-- Skorlama basit: eşleşmeme ve boşluk 1 maliyetli; yer değiştirme matrisi (BLOSUM/PAM) ve affine boşluk cezası yok.
+- Varsayılan skorlama basit (eşleşmeme ve boşluk 1 maliyetli); yer değiştirme skoru ve affine boşluk için `Scoring.blosum62()` ya da `Scoring.dna()` kullanın. PAM matrisleri yok.
 - Profiller sütun sütun değil konsensus dizisi üzerinden hizalanıyor; sonuç gerçek bir profil-profil hizalaması değil.
 - Uzaklık matrisi, uzunluğu L olan n dizi için O(n²·L²) sürer; büyük girdiler için uygun değil.
 - UPGMA sabit bir evrim hızı varsayar.
