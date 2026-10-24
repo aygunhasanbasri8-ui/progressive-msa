@@ -7,7 +7,9 @@ Implements the classic three-stage pipeline:
 """
 
 import logging
-from typing import Union
+from typing import Optional, Union
+
+from .scoring import Scoring, gotoh, identity_distance
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +76,19 @@ def _apply_path(seq: str, path: list[str], gap_op: str) -> str:
 class ProgressiveMSA:
     """Aligns a set of sequences using progressive multiple sequence alignment."""
 
-    def __init__(self, sequences: dict[str, str], verbose: bool = True):
+    def __init__(self, sequences: dict[str, str], verbose: bool = True, scoring: Optional[Scoring] = None):
         """
         Args:
             sequences: Mapping of sequence name to sequence string.
             verbose: Whether to print progress information during alignment.
+            scoring: Substitution matrix and affine gaps (``Scoring.blosum62()``,
+                ``Scoring.dna()``). None keeps the original unit costs and edit distance.
         """
+        self.scoring = scoring
         self.sequences = sequences
         self.names = list(sequences.keys())
         self.num_seqs = len(sequences)
-        self.distance_matrix: list[list[int]] = []
+        self.distance_matrix: list[list[float]] = []
         self.guide_tree: AlignmentTree = None
         self.verbose = verbose
 
@@ -93,20 +98,33 @@ class ProgressiveMSA:
         if self.verbose:
             print(message)
 
-    def calculate_distance_matrix(self) -> list[list[int]]:
-        """Computes the pairwise edit-distance matrix using Needleman-Wunsch."""
-        self._log("1. Calculating distance matrix (Needleman-Wunsch)...")
+    def calculate_distance_matrix(self) -> list[list[float]]:
+        """Pairwise distances: edit distance with unit costs, otherwise 1 - identity of the
+        Gotoh alignment (a similarity score is not a distance, so UPGMA gets identity)."""
+        if self.scoring is None:
+            self._log("1. Calculating distance matrix (Needleman-Wunsch)...")
+        else:
+            self._log(f"1. Calculating distance matrix (Gotoh, {self.scoring.name})...")
         matrix = [[0] * self.num_seqs for _ in range(self.num_seqs)]
 
         for i in range(self.num_seqs):
             for j in range(i + 1, self.num_seqs):
-                distance = self.needleman_wunsch_distance(
-                    self.sequences[self.names[i]], self.sequences[self.names[j]]
-                )
+                distance = self._pair_distance(self.sequences[self.names[i]], self.sequences[self.names[j]])
                 matrix[i][j] = matrix[j][i] = distance
 
         self.distance_matrix = matrix
         return self.distance_matrix
+
+    def _pair_distance(self, seq1: str, seq2: str) -> float:
+        if self.scoring is None:
+            return self.needleman_wunsch_distance(seq1, seq2)
+        _, path = gotoh(seq1, seq2, self.scoring)
+        return round(identity_distance(seq1, seq2, path), 6)
+
+    def _pair_path(self, seq1: str, seq2: str):
+        if self.scoring is None:
+            return _needleman_wunsch(seq1, seq2)
+        return gotoh(seq1, seq2, self.scoring)
 
     def needleman_wunsch_distance(self, seq1: str, seq2: str) -> int:
         """Returns the global-alignment edit distance between two sequences."""
@@ -174,7 +192,7 @@ class ProgressiveMSA:
 
     def _align_profiles(self, prof1: dict[str, str], prof2: dict[str, str]) -> dict[str, str]:
         # Profiles are aligned through their consensus strings, not column by column.
-        _, path = _needleman_wunsch(self._get_consensus(prof1), self._get_consensus(prof2))
+        _, path = self._pair_path(self._get_consensus(prof1), self._get_consensus(prof2))
 
         aligned = {name: _apply_path(seq, path, INSERT) for name, seq in prof1.items()}
         aligned.update({name: _apply_path(seq, path, DELETE) for name, seq in prof2.items()})

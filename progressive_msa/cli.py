@@ -8,6 +8,7 @@ import sys
 
 from .io import FastaError, format_clustal, format_fasta, parse_fasta, read_fasta
 from .msa_core import ProgressiveMSA
+from .scoring import Scoring
 
 FORMATTERS = {"fasta": format_fasta, "clustal": format_clustal}
 
@@ -25,6 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list sequences in guide-tree order instead of input order",
     )
+    align.add_argument(
+        "-s",
+        "--scoring",
+        choices=("unit", "blosum62", "dna"),
+        default="unit",
+        help="unit: edit distance (default); blosum62: proteins; dna: transitions cheaper than transversions",
+    )
+    align.add_argument("--gap-open", type=float, default=10.0, help="gap opening penalty (blosum62/dna)")
+    align.add_argument("--gap-extend", type=float, default=1.0, help="gap extension penalty (blosum62/dna)")
     align.add_argument("-v", "--verbose", action="store_true", help="log the pipeline steps to stderr")
     return parser
 
@@ -39,7 +49,12 @@ def _align(args: argparse.Namespace) -> int:
         print(f"msa: {exc}", file=sys.stderr)
         return 2
 
-    aligned = ProgressiveMSA(sequences, verbose=False).run()
+    scoring = None
+    if args.scoring == "blosum62":
+        scoring = Scoring.blosum62(args.gap_open, args.gap_extend)
+    elif args.scoring == "dna":
+        scoring = Scoring.dna(gap_open=args.gap_open, gap_extend=args.gap_extend)
+    aligned = ProgressiveMSA(sequences, verbose=False, scoring=scoring).run()
     if not args.tree_order:
         aligned = {name: aligned[name] for name in sequences}
 

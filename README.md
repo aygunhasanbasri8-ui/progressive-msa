@@ -73,6 +73,25 @@ steps to stderr.
 
 From Python: `parse_fasta`, `read_fasta`, `format_fasta` and `format_clustal`.
 
+### Scoring
+
+By default the library keeps its original model: unit costs and an edit distance. For real
+sequences pass a scoring scheme; the pairwise step then uses Gotoh's affine-gap algorithm
+(gap opening and extension penalised separately) and the guide tree is built from
+`1 - identity` of those alignments:
+
+```python
+from progressive_msa import ProgressiveMSA, Scoring
+
+ProgressiveMSA(proteins, scoring=Scoring.blosum62())               # gap open 10, extend 1
+ProgressiveMSA(proteins, scoring=Scoring.blosum62(gap_open=11))
+ProgressiveMSA(reads, scoring=Scoring.dna())                       # match 5, transition -1, transversion -4
+```
+
+On the command line: `msa align in.fasta --scoring blosum62 --gap-open 10 --gap-extend 1`.
+BLOSUM62 is the table NCBI distributes. Affine gaps keep an insertion or deletion in one
+piece where unit costs would scatter it.
+
 ### API
 
 | Method | Description |
@@ -96,7 +115,7 @@ From Python: `parse_fasta`, `read_fasta`, `format_fasta` and `format_clustal`.
 
 ## Limitations
 
-- Scoring is simple: a mismatch and a gap both cost 1, and there are no substitution matrices (BLOSUM/PAM) and no affine gap penalties.
+- The default scoring is simple (mismatch and gap both cost 1); use `Scoring.blosum62()` or `Scoring.dna()` for substitution scores and affine gaps. PAM matrices are not included.
 - Profiles are aligned through their consensus sequence, not column to column, so the result is not a true profile-profile alignment.
 - The distance matrix takes O(n²·L²) time for n sequences of length L, so it is not meant for large inputs.
 - UPGMA assumes a constant rate of evolution.
