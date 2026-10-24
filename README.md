@@ -83,9 +83,9 @@ sequences pass a scoring scheme; the pairwise step then uses Gotoh's affine-gap 
 ```python
 from progressive_msa import ProgressiveMSA, Scoring
 
-ProgressiveMSA(proteins, scoring=Scoring.blosum62())               # gap open 10, extend 1
+ProgressiveMSA(proteins, scoring=Scoring.blosum62())  # gap open 10, extend 1
 ProgressiveMSA(proteins, scoring=Scoring.blosum62(gap_open=11))
-ProgressiveMSA(reads, scoring=Scoring.dna())                       # match 5, transition -1, transversion -4
+ProgressiveMSA(reads, scoring=Scoring.dna())  # match 5, transition -1, transversion -4
 ```
 
 On the command line: `msa align in.fasta --scoring blosum62 --gap-open 10 --gap-extend 1`.
@@ -116,9 +116,40 @@ piece where unit costs would scatter it.
 ## Limitations
 
 - The default scoring is simple (mismatch and gap both cost 1); use `Scoring.blosum62()` or `Scoring.dna()` for substitution scores and affine gaps. PAM matrices are not included.
-- Profiles are aligned through their consensus sequence, not column to column, so the result is not a true profile-profile alignment.
+- With the default unit costs profiles are aligned through their consensus sequence; with a `Scoring` they are aligned column to column.
 - The distance matrix takes O(n²·L²) time for n sequences of length L, so it is not meant for large inputs.
-- UPGMA assumes a constant rate of evolution.
+- UPGMA (default) assumes a constant rate of evolution; `tree="nj"` uses neighbor joining instead.
+
+## Guide tree and profiles
+
+`ProgressiveMSA(seqs, scoring=Scoring.blosum62(), tree="nj")` builds the guide tree with
+neighbor joining (Saitou-Nei), which does not assume a constant rate of evolution. With a
+scoring scheme, profiles are aligned column to column: two columns score the average
+substitution score over every residue pair across them, so minority residues still count
+(the default unit-cost mode keeps aligning consensus strings).
+
+## Measuring quality
+
+`msa score test.fa reference.fa` prints the sum-of-pairs (SP: share of reference residue
+pairs the test also aligns) and total-column (TC: share of reference columns reproduced
+exactly) scores, the measures used by BAliBASE. From Python: `sum_of_pairs` and
+`total_column`.
+
+`benchmarks/simulate.py` generates protein families with a known true alignment
+(substitutions plus short insertions/deletions along random lineages) and scores each
+configuration against it. With 12 families of 6 sequences, length 120, 25% substitutions
+and 2% indels per residue:
+
+| Configuration | SP | TC |
+|---|---|---|
+| unit costs / UPGMA (default) | 0.935 | 0.813 |
+| BLOSUM62 + affine gaps, column profiles / UPGMA | 0.948 | 0.850 |
+| BLOSUM62 + affine gaps, column profiles / NJ | 0.942 | 0.842 |
+
+Substitutions in the simulation are uniform rather than BLOSUM-shaped, so this
+understates what a substitution matrix gains on real proteins; at 45% substitutions the
+gap is similar (SP 0.751 vs 0.768). A comparison on BAliBASE against Clustal Omega and
+MUSCLE has not been done yet.
 
 ## Development
 
@@ -127,6 +158,10 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check .
 pytest
 ```
+
+Publishing a GitHub release `vX.Y.Z` builds the package and uploads it to PyPI through
+Trusted Publishing (`.github/workflows/publish.yml`; the project must be registered on PyPI
+with this workflow first).
 
 GitHub Actions runs ruff and the tests on Python 3.9, 3.11 and 3.12 for every push and pull request
 (`.github/workflows/ci.yml`).

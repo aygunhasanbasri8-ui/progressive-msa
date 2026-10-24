@@ -114,11 +114,25 @@ def gotoh(seq1: str, seq2: str, scoring: Scoring) -> tuple[float, list[str]]:
     against a gap), Y in a gap in seq1 (INSERT). Ties prefer M, then DELETE, then
     INSERT, the same order as the unit-cost routine, so results stay deterministic.
     """
-    n, m = len(seq1), len(seq2)
-    go, ge = scoring.gap_open, scoring.gap_extend
+    return gotoh_core(
+        len(seq1),
+        len(seq2),
+        lambda i, j: scoring.score(seq1[i], seq2[j]),
+        scoring.gap_open,
+        scoring.gap_extend,
+    )
+
+
+def gotoh_core(n: int, m: int, score, gap_open: float, gap_extend: float) -> tuple[float, list[str]]:
+    """Gotoh over any two sequences of items; ``score(i, j)`` scores item i against item j.
+
+    Shared by residue-residue and column-column (profile) alignment.
+    """
+    go, ge = gap_open, gap_extend
     M = [[_NEG_INF] * (m + 1) for _ in range(n + 1)]
     X = [[_NEG_INF] * (m + 1) for _ in range(n + 1)]
     Y = [[_NEG_INF] * (m + 1) for _ in range(n + 1)]
+    S = [[0.0] * m for _ in range(n)]
     M[0][0] = 0.0
     for i in range(1, n + 1):
         X[i][0] = -go - i * ge
@@ -126,9 +140,8 @@ def gotoh(seq1: str, seq2: str, scoring: Scoring) -> tuple[float, list[str]]:
         Y[0][j] = -go - j * ge
 
     for i in range(1, n + 1):
-        a = seq1[i - 1]
         for j in range(1, m + 1):
-            s = scoring.score(a, seq2[j - 1])
+            s = S[i - 1][j - 1] = score(i - 1, j - 1)
             M[i][j] = max(M[i - 1][j - 1], X[i - 1][j - 1], Y[i - 1][j - 1]) + s
             X[i][j] = max(M[i - 1][j] - go - ge, X[i - 1][j] - ge, Y[i - 1][j] - go - ge)
             Y[i][j] = max(M[i][j - 1] - go - ge, Y[i][j - 1] - ge, X[i][j - 1] - go - ge)
@@ -142,8 +155,7 @@ def gotoh(seq1: str, seq2: str, scoring: Scoring) -> tuple[float, list[str]]:
     while i > 0 or j > 0:
         path.append(state)
         if state == MATCH:
-            s = scoring.score(seq1[i - 1], seq2[j - 1])
-            prev = M[i][j] - s
+            prev = M[i][j] - S[i - 1][j - 1]
             i, j = i - 1, j - 1
             state = _pick(prev, ((MATCH, M[i][j]), (DELETE, X[i][j]), (INSERT, Y[i][j])))
         elif state == DELETE:
@@ -164,6 +176,48 @@ def gotoh(seq1: str, seq2: str, scoring: Scoring) -> tuple[float, list[str]]:
             state = DELETE
     path.reverse()
     return best, path
+
+
+def profile_columns(profile: dict[str, str]) -> list[dict[str, int]]:
+    """Residue counts per column of an aligned profile (gaps counted under "-")."""
+    rows = list(profile.values())
+    columns = []
+    for k in range(len(rows[0]) if rows else 0):
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row[k]] = counts.get(row[k], 0) + 1
+        columns.append(counts)
+    return columns
+
+
+def align_profiles(prof1: dict[str, str], prof2: dict[str, str], scoring: Scoring) -> tuple[float, list[str]]:
+    """Column-to-column alignment of two profiles.
+
+    The score of two columns is the average substitution score over every residue pair
+    across them; pairs involving a gap add nothing. Unlike aligning the consensus
+    strings, minority residues in a column still count.
+    """
+    cols1, cols2 = profile_columns(prof1), profile_columns(prof2)
+    n1, n2 = len(prof1), len(prof2)
+    cache: dict[tuple[str, str], float] = {}
+
+    def pair(a: str, b: str) -> float:
+        key = (a, b)
+        if key not in cache:
+            cache[key] = scoring.score(a, b)
+        return cache[key]
+
+    def score(i: int, j: int) -> float:
+        total = 0.0
+        for a, ca in cols1[i].items():
+            if a == "-":
+                continue
+            for b, cb in cols2[j].items():
+                if b != "-":
+                    total += ca * cb * pair(a, b)
+        return total / (n1 * n2)
+
+    return gotoh_core(len(cols1), len(cols2), score, scoring.gap_open, scoring.gap_extend)
 
 
 def _pick(target: float, options) -> str:

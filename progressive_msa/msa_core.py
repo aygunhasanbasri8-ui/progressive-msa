@@ -9,7 +9,7 @@ Implements the classic three-stage pipeline:
 import logging
 from typing import Optional, Union
 
-from .scoring import Scoring, gotoh, identity_distance
+from .scoring import Scoring, align_profiles, gotoh, identity_distance
 
 logger = logging.getLogger(__name__)
 
@@ -76,15 +76,26 @@ def _apply_path(seq: str, path: list[str], gap_op: str) -> str:
 class ProgressiveMSA:
     """Aligns a set of sequences using progressive multiple sequence alignment."""
 
-    def __init__(self, sequences: dict[str, str], verbose: bool = True, scoring: Optional[Scoring] = None):
+    def __init__(
+        self,
+        sequences: dict[str, str],
+        verbose: bool = True,
+        scoring: Optional[Scoring] = None,
+        tree: str = "upgma",
+    ):
         """
         Args:
             sequences: Mapping of sequence name to sequence string.
             verbose: Whether to print progress information during alignment.
             scoring: Substitution matrix and affine gaps (``Scoring.blosum62()``,
-                ``Scoring.dna()``). None keeps the original unit costs and edit distance.
+                ``Scoring.dna()``). None keeps the original unit costs and edit distance;
+                with a scoring, profiles are also aligned column by column.
+            tree: "upgma" (default) or "nj" (neighbor joining, no constant-rate assumption).
         """
+        if tree not in ("upgma", "nj"):
+            raise ValueError(f"unknown tree method: {tree}")
         self.scoring = scoring
+        self.tree = tree
         self.sequences = sequences
         self.names = list(sequences.keys())
         self.num_seqs = len(sequences)
@@ -121,18 +132,15 @@ class ProgressiveMSA:
         _, path = gotoh(seq1, seq2, self.scoring)
         return round(identity_distance(seq1, seq2, path), 6)
 
-    def _pair_path(self, seq1: str, seq2: str):
-        if self.scoring is None:
-            return _needleman_wunsch(seq1, seq2)
-        return gotoh(seq1, seq2, self.scoring)
-
     def needleman_wunsch_distance(self, seq1: str, seq2: str) -> int:
         """Returns the global-alignment edit distance between two sequences."""
         distance, _ = _needleman_wunsch(seq1, seq2)
         return distance
 
     def build_guide_tree(self) -> AlignmentTree:
-        """Builds a guide tree over the sequences using UPGMA clustering."""
+        """Builds a guide tree over the sequences (UPGMA, or neighbor joining with tree="nj")."""
+        if self.tree == "nj":
+            return self._neighbor_joining()
         self._log("2. Building guide tree (UPGMA)...")
         clusters: dict[int, AlignmentTree] = dict(enumerate(self.names))
         distances: dict[tuple[int, int], float] = {
@@ -169,6 +177,39 @@ class ProgressiveMSA:
         self._log(f"   Tree hierarchy: {self.guide_tree}")
         return self.guide_tree
 
+    def _neighbor_joining(self) -> AlignmentTree:
+        """Saitou-Nei neighbor joining. The tree is unrooted; the last join acts as the root,
+        which is all progressive alignment needs (an order of merges)."""
+        self._log("2. Building guide tree (neighbor joining)...")
+        nodes: dict[int, AlignmentTree] = dict(enumerate(self.names))
+        d = {(i, j): float(self.distance_matrix[i][j]) for i in nodes for j in nodes if i != j}
+        active = list(nodes)
+        next_id = self.num_seqs
+
+        while len(active) > 2:
+            n = len(active)
+            r = {i: sum(d[(i, k)] for k in active if k != i) for i in active}
+            best, pair = float("inf"), None
+            for x, i in enumerate(active):
+                for j in active[x + 1 :]:
+                    q = (n - 2) * d[(i, j)] - r[i] - r[j]
+                    # Strict < keeps the first pair in scan order: deterministic like UPGMA
+                    if q < best:
+                        best, pair = q, (i, j)
+            i, j = pair
+            nodes[next_id] = (nodes[i], nodes[j])
+            for k in active:
+                if k not in (i, j):
+                    d[(next_id, k)] = d[(k, next_id)] = (d[(i, k)] + d[(j, k)] - d[(i, j)]) / 2.0
+            active.remove(i)
+            active.remove(j)
+            active.append(next_id)
+            next_id += 1
+
+        self.guide_tree = nodes[active[0]] if len(active) == 1 else (nodes[active[0]], nodes[active[1]])
+        self._log(f"   Tree hierarchy: {self.guide_tree}")
+        return self.guide_tree
+
     def progressive_alignment(self) -> dict[str, str]:
         """Aligns all sequences by traversing the guide tree bottom-up."""
         self._log("3. Running progressive alignment...\n")
@@ -191,8 +232,11 @@ class ProgressiveMSA:
         return "".join(consensus)
 
     def _align_profiles(self, prof1: dict[str, str], prof2: dict[str, str]) -> dict[str, str]:
-        # Profiles are aligned through their consensus strings, not column by column.
-        _, path = self._pair_path(self._get_consensus(prof1), self._get_consensus(prof2))
+        if self.scoring is None:
+            # Unit-cost mode keeps the original behaviour: align the consensus strings.
+            _, path = _needleman_wunsch(self._get_consensus(prof1), self._get_consensus(prof2))
+        else:
+            _, path = align_profiles(prof1, prof2, self.scoring)
 
         aligned = {name: _apply_path(seq, path, INSERT) for name, seq in prof1.items()}
         aligned.update({name: _apply_path(seq, path, DELETE) for name, seq in prof2.items()})

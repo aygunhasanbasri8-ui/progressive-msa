@@ -82,9 +82,9 @@ Gerçek diziler için bir skorlama verin; ikili adım Gotoh'un affine boşluk al
 ```python
 from progressive_msa import ProgressiveMSA, Scoring
 
-ProgressiveMSA(proteinler, scoring=Scoring.blosum62())               # boşluk açma 10, uzatma 1
+ProgressiveMSA(proteinler, scoring=Scoring.blosum62())  # boşluk açma 10, uzatma 1
 ProgressiveMSA(proteinler, scoring=Scoring.blosum62(gap_open=11))
-ProgressiveMSA(okumalar, scoring=Scoring.dna())                      # eşleşme 5, geçiş -1, dönüşüm -4
+ProgressiveMSA(okumalar, scoring=Scoring.dna())  # eşleşme 5, geçiş -1, dönüşüm -4
 ```
 
 Komut satırında: `msa align in.fasta --scoring blosum62 --gap-open 10 --gap-extend 1`.
@@ -115,9 +115,39 @@ ekleme ya da silmeyi tek parça tutar.
 ## Sınırlar
 
 - Varsayılan skorlama basit (eşleşmeme ve boşluk 1 maliyetli); yer değiştirme skoru ve affine boşluk için `Scoring.blosum62()` ya da `Scoring.dna()` kullanın. PAM matrisleri yok.
-- Profiller sütun sütun değil konsensus dizisi üzerinden hizalanıyor; sonuç gerçek bir profil-profil hizalaması değil.
+- Varsayılan birim maliyetlerde profiller konsensus dizisi üzerinden hizalanıyor; bir `Scoring` verilince sütun sütun hizalanıyor.
 - Uzaklık matrisi, uzunluğu L olan n dizi için O(n²·L²) sürer; büyük girdiler için uygun değil.
-- UPGMA sabit bir evrim hızı varsayar.
+- UPGMA (varsayılan) sabit bir evrim hızı varsayar; `tree="nj"` bunun yerine neighbor joining kullanır.
+
+## Rehber ağaç ve profiller
+
+`ProgressiveMSA(diziler, scoring=Scoring.blosum62(), tree="nj")` rehber ağacı sabit evrim
+hızı varsaymayan neighbor joining (Saitou-Nei) ile kurar. Bir skorlama verildiğinde
+profiller sütun sütun hizalanır: iki sütunun skoru, aralarındaki tüm kalıntı çiftlerinin
+ortalama yer değiştirme skorudur; azınlıktaki kalıntılar da hesaba girer (varsayılan birim
+maliyet modu konsensus dizilerini hizalamaya devam eder).
+
+## Kaliteyi ölçmek
+
+`msa score test.fa referans.fa` BAliBASE'in kullandığı sum-of-pairs (SP: referansta
+hizalanan kalıntı çiftlerinden testin de hizaladığı oran) ve total-column (TC: birebir
+tutturulan referans sütunlarının oranı) skorlarını yazar. Python'dan: `sum_of_pairs` ve
+`total_column`.
+
+`benchmarks/simulate.py` gerçek hizalaması bilinen protein aileleri üretir (rastgele
+soylar boyunca yer değiştirme ve kısa ekleme/silmeler) ve her yapılandırmayı buna göre
+puanlar. 6 dizilik 12 aile, uzunluk 120, kalıntı başına %25 yer değiştirme ve %2 indel ile:
+
+| Yapılandırma | SP | TC |
+|---|---|---|
+| birim maliyet / UPGMA (varsayılan) | 0.935 | 0.813 |
+| BLOSUM62 + affine boşluk, sütun profili / UPGMA | 0.948 | 0.850 |
+| BLOSUM62 + affine boşluk, sütun profili / NJ | 0.942 | 0.842 |
+
+Simülasyondaki yer değiştirmeler BLOSUM'a göre değil düzgün dağılımlı; bu yüzden gerçek
+proteinlerde matrisin kazancını olduğundan az gösteriyor. %45 yer değiştirmede fark benzer
+(SP 0,751'e karşı 0,768). BAliBASE üzerinde Clustal Omega ve MUSCLE ile karşılaştırma henüz
+yapılmadı.
 
 ## Geliştirme
 
@@ -126,6 +156,10 @@ pip install -e ".[dev]"
 ruff check . && ruff format --check .
 pytest
 ```
+
+GitHub'da `vX.Y.Z` release'i yayımlanınca paket derlenip Trusted Publishing ile PyPI'ye
+yüklenir (`.github/workflows/publish.yml`; projenin önce PyPI'de bu iş akışıyla kaydedilmesi
+gerekir).
 
 GitHub Actions her push ve pull request'te ruff'ı ve testleri Python 3.9, 3.11 ve 3.12 üzerinde çalıştırır
 (`.github/workflows/ci.yml`).
