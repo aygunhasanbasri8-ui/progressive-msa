@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "progressive-msa"
-version = "0.3.0"
+version = "0.4.0"
 description = "A pure-Python progressive multiple sequence alignment library (Clustal Omega-style: Needleman-Wunsch + UPGMA)"
 readme = "README.md"
 requires-python = ">=3.9"

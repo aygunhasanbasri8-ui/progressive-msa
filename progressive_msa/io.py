@@ -12,10 +12,11 @@ class FastaError(ValueError):
     """Raised when the input is not usable FASTA."""
 
 
-def parse_fasta(lines: Iterable[str]) -> dict[str, str]:
+def parse_fasta(lines: Iterable[str], keep_gaps: bool = False) -> dict[str, str]:
     """Parses FASTA records into {name: sequence}, keeping input order.
 
     The name is the first word of the header line, so "seq1 Homo sapiens" becomes "seq1".
+    Gaps are dropped unless keep_gaps is set (for reading an existing alignment).
     """
     sequences: dict[str, str] = {}
     name = None
@@ -46,7 +47,10 @@ def parse_fasta(lines: Iterable[str]) -> dict[str, str]:
             raise FastaError(f"line {line_no}: sequence data before the first '>' header")
         else:
             # Gaps from an already aligned input are dropped; the library aligns from scratch.
-            chunks.append("".join(line.split()).replace("-", "").replace(".", ""))
+            residues = "".join(line.split())
+            chunks.append(
+                residues.replace(".", "-") if keep_gaps else residues.replace("-", "").replace(".", "")
+            )
 
     flush()
     if not sequences:
@@ -54,9 +58,9 @@ def parse_fasta(lines: Iterable[str]) -> dict[str, str]:
     return sequences
 
 
-def read_fasta(path: str) -> dict[str, str]:
+def read_fasta(path: str, keep_gaps: bool = False) -> dict[str, str]:
     with open(path, encoding="utf-8") as handle:
-        return parse_fasta(handle)
+        return parse_fasta(handle, keep_gaps)
 
 
 def format_fasta(alignment: Mapping[str, str], width: int = FASTA_LINE) -> str:
